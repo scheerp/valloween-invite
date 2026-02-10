@@ -4,9 +4,57 @@ import { loadSlim } from "@tsparticles/slim";
 import { loadHeartShape } from "@tsparticles/shape-heart";
 import "./App.css";
 
-type Stats = {
-  yesClicks: number;
-  noClicks: number;
+type RemoteStats = {
+  yes: number;
+  no: number;
+  modals: number;
+  hides: number;
+};
+
+const MODAL_TRIGGER_MIN = 3;
+const MODAL_TRIGGER_MAX = 5;
+const MODAL_SHOW_LIMIT = 3;
+const HIDE_TRIGGER_MIN = 3;
+const HIDE_TRIGGER_MAX = 5;
+const MODAL_IMAGES = [
+  "/1.gif",
+  "/2.gif",
+  "/3.gif",
+  "/4.gif",
+  "/5.gif",
+  "/6.gif",
+];
+const MODAL_TEXTS = [
+  "Aw, come on. Play nice.",
+  "Okay, cheeky. I am keeping score.",
+  "Final warning: one more no and I send the ghosts to nibble back.",
+  "You are toying with dark forces. Choose wisely.",
+  "Stop playing!",
+  "No more biting for you.",
+];
+const HIDE_MODAL_TEXTS = [
+  "Nope. Button confiscated. Play nice.",
+  "Too much teasing. I am taking the button away.",
+  "The haunted button is gone now. You did this.",
+  "All right, biter. The button is removed.",
+  "You pushed it too far. The button vanishes.",
+];
+
+const randomBetween = (min: number, max: number) =>
+  Math.floor(Math.random() * (max - min + 1)) + min;
+
+const shuffle = <T,>(items: T[]) => {
+  const list = [...items];
+  for (let i = list.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [list[i], list[j]] = [list[j], list[i]];
+  }
+  return list;
+};
+
+const pickRandom = (items: string[]) => {
+  if (items.length === 0) return "";
+  return items[Math.floor(Math.random() * items.length)] ?? "";
 };
 
 const ParticlesBackground = memo(function ParticlesBackground({
@@ -27,26 +75,9 @@ const ParticlesBackground = memo(function ParticlesBackground({
 
 const STORAGE_KEY = "valloween-stats";
 
-const readStats = (): Stats | null => {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) return null;
-
-  try {
-    const parsed = JSON.parse(raw) as Partial<Stats>;
-    const yesClicks = Number(parsed.yesClicks ?? 0);
-    const noClicks = Number(parsed.noClicks ?? 0);
-
-    if (Number.isNaN(yesClicks) || Number.isNaN(noClicks)) {
-      return null;
-    }
-
-    return {
-      yesClicks,
-      noClicks,
-    };
-  } catch {
-    return null;
-  }
+const shouldShowAdmin = () => {
+  if (typeof window === "undefined") return false;
+  return new URLSearchParams(window.location.search).has("admin");
 };
 
 function App() {
@@ -56,7 +87,32 @@ function App() {
   const [noClicks, setNoClicks] = useState(0);
   const [noPos, setNoPos] = useState({ x: 16, y: 24 });
   const [noFree, setNoFree] = useState(false);
+  const [noTriggerCount, setNoTriggerCount] = useState(0);
+  const [nextModalAt, setNextModalAt] = useState(() =>
+    randomBetween(MODAL_TRIGGER_MIN, MODAL_TRIGGER_MAX),
+  );
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalImage, setModalImage] = useState("");
+  const [modalText, setModalText] = useState("");
+  const [modalShownCount, setModalShownCount] = useState(0);
+  const [hideTriggerCount, setHideTriggerCount] = useState(0);
+  const [nextHideAt, setNextHideAt] = useState(() =>
+    randomBetween(HIDE_TRIGGER_MIN, HIDE_TRIGGER_MAX),
+  );
+  const [noHidePhase, setNoHidePhase] = useState<
+    "visible" | "hiding" | "hidden"
+  >("visible");
+  const [adminVisible] = useState(shouldShowAdmin);
+  const [adminToken, setAdminToken] = useState("");
+  const [remoteStats, setRemoteStats] = useState<RemoteStats | null>(null);
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [statsError, setStatsError] = useState("");
   const noRef = useRef<HTMLButtonElement>(null);
+  const modalImageOrderRef = useRef(shuffle(MODAL_IMAGES));
+  const modalImageIndexRef = useRef(0);
+  const lastModalImageRef = useRef<string | null>(null);
+  const modalTextOrderRef = useRef(shuffle(MODAL_TEXTS));
+  const modalTextIndexRef = useRef(0);
 
   useEffect(() => {
     initParticlesEngine(async (engine) => {
@@ -64,6 +120,39 @@ function App() {
       await loadHeartShape(engine);
     }).then(() => setParticlesReady(true));
   }, []);
+
+  useEffect(() => {
+    if (!adminVisible) return;
+    const loadStats = async () => {
+      setStatsLoading(true);
+      setStatsError("");
+      try {
+        const response = await fetch("/api/stats");
+        if (!response.ok) {
+          throw new Error("Stats fetch failed");
+        }
+        const data = (await response.json()) as RemoteStats;
+        setRemoteStats(data);
+      } catch {
+        setStatsError("Could not load stats.");
+      } finally {
+        setStatsLoading(false);
+      }
+    };
+
+    loadStats();
+  }, [adminVisible]);
+
+  useEffect(() => {
+    if (!modalOpen) return;
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setModalOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [modalOpen]);
 
   const isMobile =
     typeof window !== "undefined" &&
@@ -151,6 +240,105 @@ function App() {
     setNoPos({ x, y });
   };
 
+  const nextModalImage = () => {
+    const order = modalImageOrderRef.current;
+    if (order.length === 0) return "";
+    let index = modalImageIndexRef.current;
+    let image = order[index] ?? "";
+    if (lastModalImageRef.current && order.length > 1) {
+      if (image === lastModalImageRef.current) {
+        index = (index + 1) % order.length;
+        image = order[index] ?? "";
+      }
+    }
+    const nextIndex = index + 1;
+    if (nextIndex >= order.length) {
+      const reshuffled = shuffle(order);
+      if (reshuffled.length > 1 && reshuffled[0] === image) {
+        [reshuffled[0], reshuffled[1]] = [reshuffled[1], reshuffled[0]];
+      }
+      modalImageOrderRef.current = reshuffled;
+      modalImageIndexRef.current = 0;
+    } else {
+      modalImageIndexRef.current = nextIndex;
+    }
+    lastModalImageRef.current = image;
+    return image;
+  };
+
+  const nextModalText = () => {
+    const order = modalTextOrderRef.current;
+    if (order.length === 0) return "";
+    const text = order[modalTextIndexRef.current] ?? "";
+    const nextIndex = modalTextIndexRef.current + 1;
+    if (nextIndex >= order.length) {
+      modalTextOrderRef.current = shuffle(order);
+      modalTextIndexRef.current = 0;
+    } else {
+      modalTextIndexRef.current = nextIndex;
+    }
+    return text;
+  };
+
+  const openModal = (options?: {
+    image?: string;
+    text?: string;
+    count?: boolean;
+  }) => {
+    setModalImage(options?.image ?? nextModalImage());
+    setModalText(options?.text ?? nextModalText());
+    setModalOpen(true);
+    fetch("/api/stats", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "modal" }),
+    }).catch(() => undefined);
+    if (options?.count !== false) {
+      setModalShownCount((count) => count + 1);
+    }
+  };
+
+  const startHideNoButton = () => {
+    if (noHidePhase !== "visible") return;
+    openModal({
+      image: nextModalImage(),
+      text: pickRandom(HIDE_MODAL_TEXTS),
+      count: false,
+    });
+    fetch("/api/stats", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "hide" }),
+    }).catch(() => undefined);
+    setNoHidePhase("hiding");
+  };
+
+  const registerNoTrigger = () => {
+    if (modalOpen) return;
+    if (noHidePhase !== "visible") return;
+
+    if (modalShownCount >= MODAL_SHOW_LIMIT) {
+      const nextCount = hideTriggerCount + 1;
+      if (nextCount >= nextHideAt) {
+        startHideNoButton();
+        setHideTriggerCount(0);
+        setNextHideAt(randomBetween(HIDE_TRIGGER_MIN, HIDE_TRIGGER_MAX));
+      } else {
+        setHideTriggerCount(nextCount);
+      }
+      return;
+    }
+
+    const nextCount = noTriggerCount + 1;
+    if (nextCount >= nextModalAt) {
+      openModal();
+      setNoTriggerCount(0);
+      setNextModalAt(randomBetween(MODAL_TRIGGER_MIN, MODAL_TRIGGER_MAX));
+    } else {
+      setNoTriggerCount(nextCount);
+    }
+  };
+
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ yesClicks, noClicks }));
   }, [yesClicks, noClicks]);
@@ -168,11 +356,22 @@ function App() {
 
   const handleYes = () => {
     setYesClicks((current) => current + 1);
+    fetch("/api/stats", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "yes" }),
+    }).catch(() => undefined);
     setAccepted(true);
   };
 
   const handleNo = () => {
+    registerNoTrigger();
     setNoClicks((current) => current + 1);
+    fetch("/api/stats", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "no" }),
+    }).catch(() => undefined);
     if (!noFree) {
       pinNoButtonToCurrent();
       setNoFree(true);
@@ -189,6 +388,8 @@ function App() {
     if (!window.matchMedia("(hover: hover) and (pointer: fine)").matches) {
       return;
     }
+
+    registerNoTrigger();
 
     if (!noFree) {
       pinNoButtonToCurrent();
@@ -221,7 +422,7 @@ function App() {
           </h1>
           <p className="subtitle">
             A haunted vow for Isy: bouldering by dusk, Chainsaw Man by night,
-            and a haunted yes in between.
+            and a teasing bite in between.
           </p>
         </div>
 
@@ -231,7 +432,7 @@ function App() {
             <p className="success-text">
               You said yes, my eerie muse. First we chase the wall, then drift
               into the fresh Chainsaw Man night. And there might be a few
-              dark-sweet surprises waiting for you.
+              dark-sweet surprises waiting for you (bite optional).
             </p>
             <p className="success-subtext">Isy, see you on our haunted date.</p>
           </div>
@@ -241,7 +442,7 @@ function App() {
               <button type="button" className="btn btn-yes" onClick={handleYes}>
                 Yes, forever
               </button>
-              {noFree ? (
+              {noHidePhase === "hidden" ? null : noFree ? (
                 <span className="btn btn-no btn-no--ghost" aria-hidden="true">
                   No way
                 </span>
@@ -249,29 +450,173 @@ function App() {
                 <button
                   ref={noRef}
                   type="button"
-                  className="btn btn-no"
+                  className={`btn btn-no${noHidePhase === "hiding" ? " btn-no--popout" : ""}`}
                   onClick={handleNo}
                   onMouseEnter={handleNoHover}
+                  onAnimationEnd={() => {
+                    if (noHidePhase === "hiding") {
+                      setNoHidePhase("hidden");
+                    }
+                  }}
                 >
                   No way
                 </button>
               )}
             </div>
-            {noFree ? (
-              <button
-                ref={noRef}
-                type="button"
-                className="btn btn-no btn-no--free"
+            {noFree && noHidePhase !== "hidden" ? (
+              <span
+                className="btn-no-flyer"
                 style={{ transform: `translate(${noPos.x}px, ${noPos.y}px)` }}
-                onClick={handleNo}
-                onMouseEnter={handleNoHover}
               >
-                No way
-              </button>
+                <button
+                  ref={noRef}
+                  type="button"
+                  className={`btn btn-no${noHidePhase === "hiding" ? " btn-no--popout" : ""}`}
+                  onClick={handleNo}
+                  onMouseEnter={handleNoHover}
+                  onAnimationEnd={() => {
+                    if (noHidePhase === "hiding") {
+                      setNoHidePhase("hidden");
+                    }
+                  }}
+                >
+                  No way
+                </button>
+              </span>
             ) : null}
           </>
         )}
+        {adminVisible ? (
+          <div className="admin-panel">
+            <div className="admin-header">
+              <h3 className="admin-title">Admin stats</h3>
+              <button
+                type="button"
+                className="btn btn-no admin-button"
+                onClick={async () => {
+                  setStatsLoading(true);
+                  setStatsError("");
+                  try {
+                    const response = await fetch("/api/stats");
+                    if (!response.ok) {
+                      throw new Error("Stats fetch failed");
+                    }
+                    const data = (await response.json()) as RemoteStats;
+                    setRemoteStats(data);
+                  } catch {
+                    setStatsError("Could not load stats.");
+                  } finally {
+                    setStatsLoading(false);
+                  }
+                }}
+                disabled={statsLoading}
+              >
+                Refresh
+              </button>
+            </div>
+            <div className="admin-grid">
+              <div className="admin-card">
+                <span className="admin-label">Yes</span>
+                <span className="admin-value">
+                  {remoteStats ? remoteStats.yes : "-"}
+                </span>
+              </div>
+              <div className="admin-card">
+                <span className="admin-label">No</span>
+                <span className="admin-value">
+                  {remoteStats ? remoteStats.no : "-"}
+                </span>
+              </div>
+              <div className="admin-card">
+                <span className="admin-label">Modals</span>
+                <span className="admin-value">
+                  {remoteStats ? remoteStats.modals : "-"}
+                </span>
+              </div>
+              <div className="admin-card">
+                <span className="admin-label">Hides</span>
+                <span className="admin-value">
+                  {remoteStats ? remoteStats.hides : "-"}
+                </span>
+              </div>
+            </div>
+            <div className="admin-controls">
+              <input
+                type="password"
+                className="admin-input"
+                placeholder="Reset token"
+                value={adminToken}
+                onChange={(event) => setAdminToken(event.target.value)}
+              />
+              <button
+                type="button"
+                className="btn btn-yes admin-button"
+                disabled={statsLoading || !adminToken}
+                onClick={async () => {
+                  setStatsLoading(true);
+                  setStatsError("");
+                  try {
+                    const response = await fetch("/api/stats-reset", {
+                      method: "POST",
+                      headers: {
+                        "Content-Type": "application/json",
+                        "x-admin-token": adminToken,
+                      },
+                      body: JSON.stringify({ token: adminToken }),
+                    });
+                    if (!response.ok) {
+                      throw new Error("Reset failed");
+                    }
+                    setRemoteStats({ yes: 0, no: 0, modals: 0, hides: 0 });
+                  } catch {
+                    setStatsError("Reset failed. Check token.");
+                  } finally {
+                    setStatsLoading(false);
+                  }
+                }}
+              >
+                Reset counters
+              </button>
+            </div>
+            {statsError ? (
+              <p className="admin-error">{statsError}</p>
+            ) : null}
+          </div>
+        ) : null}
       </section>
+      {modalOpen ? (
+        <div
+          className="modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Nope modal"
+          onClick={() => setModalOpen(false)}
+        >
+          <div
+            className="modal-panel"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h3 className="modal-title">Nope, caught you.</h3>
+            <p className="modal-text">
+              {modalText || "Nice try. The haunted button has moves."}
+            </p>
+            {modalImage ? (
+              <img
+                src={modalImage}
+                alt="Funny spooky reaction"
+                className="modal-image"
+              />
+            ) : null}
+            <button
+              type="button"
+              className="btn btn-yes modal-close"
+              onClick={() => setModalOpen(false)}
+            >
+              try again
+            </button>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
