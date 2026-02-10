@@ -121,6 +121,13 @@ function App() {
   }, []);
 
   useEffect(() => {
+    MODAL_IMAGES.forEach((src) => {
+      const img = new Image();
+      img.src = src;
+    });
+  }, []);
+
+  useEffect(() => {
     if (!adminVisible) return;
     const loadStats = async () => {
       setStatsLoading(true);
