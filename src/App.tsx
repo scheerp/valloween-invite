@@ -103,7 +103,6 @@ function App() {
     "visible" | "hiding" | "hidden"
   >("visible");
   const [adminVisible] = useState(shouldShowAdmin);
-  const [adminToken, setAdminToken] = useState("");
   const [remoteStats, setRemoteStats] = useState<RemoteStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
   const [statsError, setStatsError] = useState("");
@@ -539,44 +538,6 @@ function App() {
                   {remoteStats ? remoteStats.hides : "-"}
                 </span>
               </div>
-            </div>
-            <div className="admin-controls">
-              <input
-                type="password"
-                className="admin-input"
-                placeholder="Reset token"
-                value={adminToken}
-                onChange={(event) => setAdminToken(event.target.value)}
-              />
-              <button
-                type="button"
-                className="btn btn-yes admin-button"
-                disabled={statsLoading || !adminToken}
-                onClick={async () => {
-                  setStatsLoading(true);
-                  setStatsError("");
-                  try {
-                    const response = await fetch("/api/stats-reset", {
-                      method: "POST",
-                      headers: {
-                        "Content-Type": "application/json",
-                        "x-admin-token": adminToken,
-                      },
-                      body: JSON.stringify({ token: adminToken }),
-                    });
-                    if (!response.ok) {
-                      throw new Error("Reset failed");
-                    }
-                    setRemoteStats({ yes: 0, no: 0, modals: 0, hides: 0 });
-                  } catch {
-                    setStatsError("Reset failed. Check token.");
-                  } finally {
-                    setStatsLoading(false);
-                  }
-                }}
-              >
-                Reset counters
-              </button>
             </div>
             {statsError ? (
               <p className="admin-error">{statsError}</p>
